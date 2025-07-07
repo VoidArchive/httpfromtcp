@@ -69,6 +69,8 @@ const (
 	stateStatusWritten
 	stateHeadersWritten
 	stateBodyWritten
+	stateChunkedBodyWriting
+	stateChunkedBodyDone
 )
 
 // Writer provides a structured way to write HTTP responses
@@ -122,4 +124,53 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 		w.state = stateBodyWritten
 	}
 	return n, err
+}
+
+// WriteChunkedBody writes a chunk of data using HTTP chunked transfer encoding
+func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
+	if w.state != stateHeadersWritten && w.state != stateChunkedBodyWriting {
+		return 0, fmt.Errorf("chunked body must be written after headers")
+	}
+	
+	if len(p) == 0 {
+		return 0, nil
+	}
+	
+	// Write chunk size in hexadecimal
+	chunkSize := fmt.Sprintf("%x\r\n", len(p))
+	_, err := w.writer.Write([]byte(chunkSize))
+	if err != nil {
+		return 0, err
+	}
+	
+	// Write chunk data
+	n, err := w.writer.Write(p)
+	if err != nil {
+		return n, err
+	}
+	
+	// Write trailing CRLF
+	_, err = w.writer.Write([]byte("\r\n"))
+	if err != nil {
+		return n, err
+	}
+	
+	w.state = stateChunkedBodyWriting
+	return n, nil
+}
+
+// WriteChunkedBodyDone signals the end of chunked transfer encoding
+func (w *Writer) WriteChunkedBodyDone() (int, error) {
+	if w.state != stateChunkedBodyWriting {
+		return 0, fmt.Errorf("chunked body done can only be called during chunked transfer")
+	}
+	
+	// Write final chunk (size 0) to indicate end
+	_, err := w.writer.Write([]byte("0\r\n\r\n"))
+	if err != nil {
+		return 0, err
+	}
+	
+	w.state = stateChunkedBodyDone
+	return 0, nil
 }
