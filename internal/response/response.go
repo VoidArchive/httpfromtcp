@@ -71,6 +71,7 @@ const (
 	stateBodyWritten
 	stateChunkedBodyWriting
 	stateChunkedBodyDone
+	stateTrailersWritten
 )
 
 // Writer provides a structured way to write HTTP responses
@@ -165,12 +166,37 @@ func (w *Writer) WriteChunkedBodyDone() (int, error) {
 		return 0, fmt.Errorf("chunked body done can only be called during chunked transfer")
 	}
 	
-	// Write final chunk (size 0) to indicate end
-	_, err := w.writer.Write([]byte("0\r\n\r\n"))
+	// Write final chunk (size 0) without ending CRLF if trailers will follow
+	_, err := w.writer.Write([]byte("0\r\n"))
 	if err != nil {
 		return 0, err
 	}
 	
 	w.state = stateChunkedBodyDone
 	return 0, nil
+}
+
+// WriteTrailers writes HTTP trailers after chunked body
+func (w *Writer) WriteTrailers(trailers headers.Headers) error {
+	if w.state != stateChunkedBodyDone {
+		return fmt.Errorf("trailers can only be written after chunked body is done")
+	}
+	
+	// Write trailers (formatted like headers)
+	for key, value := range trailers {
+		trailerLine := fmt.Sprintf("%s: %s\r\n", key, value)
+		_, err := w.writer.Write([]byte(trailerLine))
+		if err != nil {
+			return err
+		}
+	}
+	
+	// Write final CRLF to end the message
+	_, err := w.writer.Write([]byte("\r\n"))
+	if err != nil {
+		return err
+	}
+	
+	w.state = stateTrailersWritten
+	return nil
 }

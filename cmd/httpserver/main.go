@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"httpfromtcp/internal/headers"
 	"httpfromtcp/internal/request"
@@ -28,7 +29,13 @@ func myHandler(w *response.Writer, req *request.Request) {
 		handleHttpbinProxy(w, req)
 		return
 	}
-	
+
+	// Check if this is a video request
+	if req.RequestLine.RequestTarget == "/video" {
+		handleVideo(w, req)
+		return
+	}
+
 	switch req.RequestLine.RequestTarget {
 	case "/yourproblem":
 		statusCode = response.StatusBadRequest
@@ -88,11 +95,11 @@ func handleHttpbinProxy(w *response.Writer, req *request.Request) {
 	if httpbinPath == "" {
 		httpbinPath = "/"
 	}
-	
+
 	// Make request to httpbin.org
 	proxyURL := "https://httpbin.org" + httpbinPath
 	fmt.Printf("Proxying to: %s\n", proxyURL)
-	
+
 	resp, err := http.Get(proxyURL)
 	if err != nil {
 		// Error making request
@@ -107,33 +114,43 @@ func handleHttpbinProxy(w *response.Writer, req *request.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	
+
 	// Write status line (convert from http.Response status code)
 	statusCode := response.StatusCode(resp.StatusCode)
 	w.WriteStatusLine(statusCode)
-	
-	// Create headers for chunked response
+
+	// Create headers for chunked response with trailers
 	responseHeaders := headers.NewHeaders()
 	responseHeaders.Override("Transfer-Encoding", "chunked")
 	responseHeaders.Override("Connection", "close")
-	
+	responseHeaders.Override("Trailer", "X-Content-SHA256, X-Content-Length")
+
 	// Copy content type from original response
 	if contentType := resp.Header.Get("Content-Type"); contentType != "" {
 		responseHeaders.Override("Content-Type", contentType)
 	}
-	
+
 	// Write headers
 	w.WriteHeaders(responseHeaders)
-	
+
+	// Track the full response body for hashing
+	var fullBody []byte
+
 	// Stream the response in chunks
 	buffer := make([]byte, 1024)
 	for {
 		n, err := resp.Body.Read(buffer)
 		if n > 0 {
 			fmt.Printf("Read %d bytes from httpbin.org\n", n)
-			w.WriteChunkedBody(buffer[:n])
+			chunk := buffer[:n]
+
+			// Add to full body for hash calculation
+			fullBody = append(fullBody, chunk...)
+
+			// Write chunk to client
+			w.WriteChunkedBody(chunk)
 		}
-		
+
 		if err == io.EOF {
 			break
 		}
@@ -142,9 +159,57 @@ func handleHttpbinProxy(w *response.Writer, req *request.Request) {
 			break
 		}
 	}
-	
+
 	// Signal end of chunked response
 	w.WriteChunkedBodyDone()
+
+	// Calculate SHA256 hash of the full body
+	hash := sha256.Sum256(fullBody)
+	hashHex := fmt.Sprintf("%x", hash)
+
+	// Write trailers
+	trailers := headers.NewHeaders()
+	trailers.Override("X-Content-SHA256", hashHex)
+	trailers.Override("X-Content-Length", strconv.Itoa(len(fullBody)))
+
+	w.WriteTrailers(trailers)
+
+	fmt.Printf("Sent response with %d bytes, SHA256: %s\n", len(fullBody), hashHex)
+}
+
+// handleVideo serves the video file
+func handleVideo(w *response.Writer, req *request.Request) {
+	// Read the video file
+	videoData, err := os.ReadFile("assets/vim.mp4")
+	if err != nil {
+		// File not found or read error
+		w.WriteStatusLine(response.StatusInternalServerError)
+		responseHeaders := headers.NewHeaders()
+		errorMsg := "Failed to read video file"
+		responseHeaders.Override("Content-Length", strconv.Itoa(len(errorMsg)))
+		responseHeaders.Override("Connection", "close")
+		responseHeaders.Override("Content-Type", "text/plain")
+		w.WriteHeaders(responseHeaders)
+		w.WriteBody([]byte(errorMsg))
+		return
+	}
+
+	// Write successful response
+	w.WriteStatusLine(response.StatusOK)
+
+	// Create headers for video response
+	responseHeaders := headers.NewHeaders()
+	responseHeaders.Override("Content-Length", strconv.Itoa(len(videoData)))
+	responseHeaders.Override("Connection", "close")
+	responseHeaders.Override("Content-Type", "video/mp4")
+
+	// Write headers
+	w.WriteHeaders(responseHeaders)
+
+	// Write video data
+	w.WriteBody(videoData)
+
+	fmt.Printf("Served video file: %d bytes\n", len(videoData))
 }
 
 func main() {
