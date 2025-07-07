@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"httpfromtcp/internal/headers"
 	"io"
+	"strconv"
 	"strings"
 )
 
 type Request struct {
 	RequestLine RequestLine
 	Headers     headers.Headers
+	Body        []byte
 
 	state requestState
 }
@@ -27,6 +29,7 @@ type requestState int
 const (
 	requestStateInitialized requestState = iota
 	requestStateParsingHeaders
+	requestStateParsingBody
 	requestStateDone
 )
 
@@ -36,7 +39,7 @@ const (
 )
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
-	buf := make([]byte, bufferSize, bufferSize)
+	buf := make([]byte, bufferSize)
 	readToIndex := 0
 	req := &Request{
 		state:   requestStateInitialized,
@@ -157,12 +160,46 @@ func (r *Request) parseSingle(data []byte) (int, error) {
 			return 0, err
 		}
 		if done {
-			r.state = requestStateDone
+			r.state = requestStateParsingBody
 		}
 		return n, nil
+	case requestStateParsingBody:
+		return r.parseBody(data)
 	case requestStateDone:
 		return 0, fmt.Errorf("error: trying to read data in a done state")
 	default:
 		return 0, fmt.Errorf("unknown state")
 	}
+}
+
+func (r *Request) parseBody(data []byte) (int, error) {
+	contentLengthStr := r.Headers.Get("Content-Length")
+
+	// If no Content-Length header, no body to parse
+	if contentLengthStr == "" {
+		r.state = requestStateDone
+		return 0, nil
+	}
+
+	// Parse Content-Length
+	contentLength, err := strconv.Atoi(contentLengthStr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid Content-Length: %s", contentLengthStr)
+	}
+
+	// Append data to body
+	r.Body = append(r.Body, data...)
+
+	// Check if we have too much data
+	if len(r.Body) > contentLength {
+		return 0, fmt.Errorf("body length %d exceeds Content-Length %d", len(r.Body), contentLength)
+	}
+
+	// Check if we have all the data we need
+	if len(r.Body) == contentLength {
+		r.state = requestStateDone
+	}
+
+	// We consumed all the data given to us
+	return len(data), nil
 }

@@ -42,7 +42,7 @@ func main() {
 			continue
 		}
 
-		// Throw the paper airplane! 
+		// Throw the paper airplane!
 		// Unlike TCP, we don't know if anyone caught it
 		_, err = conn.Write([]byte(line))
 		if err != nil {
@@ -50,3 +50,4 @@ func main() {
 		}
 	}
 }
+

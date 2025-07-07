@@ -55,16 +55,21 @@ func (h Headers) Set(key, value string) {
 	h[key] = value
 }
 
+// Get returns the value for the given key, case-insensitive
+func (h Headers) Get(key string) string {
+	return h[strings.ToLower(key)]
+}
+
 var tokenChars = []byte{'!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~'}
 
 // validTokens checks if the data contains only valid tokens
 // or characters that are allowed in a token
 func validTokens(data []byte) bool {
 	for _, c := range data {
-		if !(c >= 'A' && c <= 'Z' ||
-			c >= 'a' && c <= 'z' ||
-			c >= '0' && c <= '9' ||
-			c == '-') {
+		if (c < 'A' || c > 'Z') &&
+			(c < 'a' || c > 'z') &&
+			(c < '0' || c > '9') &&
+			c != '-' {
 			return false
 		}
 	}
