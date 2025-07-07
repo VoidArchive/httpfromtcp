@@ -60,6 +60,11 @@ func (h Headers) Get(key string) string {
 	return h[strings.ToLower(key)]
 }
 
+// Override sets a header value, replacing any existing value (doesn't append like Set)
+func (h Headers) Override(key, value string) {
+	h[strings.ToLower(key)] = value
+}
+
 var tokenChars = []byte{'!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~'}
 
 // validTokens checks if the data contains only valid tokens
